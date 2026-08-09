@@ -57,6 +57,9 @@ func NewRootCmd(f *cmdutil.Factory) *cobra.Command {
 	service.RegisterServiceCommands(root, f)
 	registerDocsImportCmd(root, f)
 	registerDocsExportCmd(root, f)
+	registerDocsExcalidrawExportCmd(root, f)
+	registerDocsSceneSemanticCmd(root, f)
+	registerDocsBoardCommentCmd(root, f)
 	withholdDisabledServices(root, f)
 
 	return root

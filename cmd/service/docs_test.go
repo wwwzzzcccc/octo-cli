@@ -81,6 +81,7 @@ func TestDocs_RegistryShape(t *testing.T) {
 		"docs.sheet.edit":          {"PATCH", "/v1/bot/docs/{docId}/sheet"},
 		"docs.scene.get":           {"GET", "/v1/bot/docs/{docId}/scene"},
 		"docs.scene.edit":          {"PATCH", "/v1/bot/docs/{docId}/scene"},
+		"docs.scene.element.image": {"POST", "/v1/bot/docs/{docId}/scene/images"},
 		"docs.members.list":        {"GET", "/v1/bot/docs/{docId}/members"},
 		"docs.members.set":         {"PUT", "/v1/bot/docs/{docId}/members"},
 		"docs.members.remove":      {"DELETE", "/v1/bot/docs/{docId}/members/{uid}"},

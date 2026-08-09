@@ -572,6 +572,7 @@
                     "docId": { "type": "string" },
                     "elements": { "type": "array", "items": { "type": "object" }, "description": "the live Excalidraw elements in fractional-index (z-order); each element is a whiteboard-schema node" },
                     "files": { "type": "object", "description": "map of fileId -> file ref (e.g. {attachId}) for images/files referenced by the scene" },
+                    "appState": { "type": "object", "description": "authoritative view state persisted with the scene; carries `viewBackgroundColor` (the canvas background CSS color, default #ffffff). Managed via `docs scene background get/set/reset`.", "properties": { "viewBackgroundColor": { "type": "string", "description": "canvas background CSS color; absent means the default #ffffff" } } },
                     "baseVersion": { "type": "string", "description": "opaque base64 base-version token; pass to `docs scene edit --base-version`" },
                     "schemaVersion": { "type": "integer", "description": "whiteboard schema version the scene was decoded with" }
                   }
@@ -583,6 +584,11 @@
       },
       "patch": {
         "operationId": "docs.scene.edit",
+        "x-octo-handwritten-commands": ["docs.scene.element.create", "docs.scene.element.update", "docs.scene.element.delete", "docs.scene.element.transform", "docs.scene.element.style", "docs.scene.element.text", "docs.scene.element.linear", "docs.scene.element.freedraw", "docs.scene.element.layer", "docs.scene.element.group", "docs.scene.element.ungroup", "docs.scene.element.transform-many", "docs.scene.element.style-many", "docs.scene.element.layer-many", "docs.scene.element.bind", "docs.scene.element.unbind", "docs.scene.element.frame-create", "docs.scene.element.frame-add", "docs.scene.element.frame-remove", "docs.scene.element.unframe", "docs.scene.element.bind-text", "docs.scene.element.unbind-text", "docs.scene.import-mermaid", "docs.scene.background.get", "docs.scene.background.set", "docs.scene.background.reset", "docs.scene.find", "docs.comments.add-board", "docs.save-excalidraw"],
+        "x-octo-board-shape-presets": ["rounded-rectangle", "ellipse", "diamond", "square", "circle", "triangle", "parallelogram", "database", "notched-dovetail", "chevron", "trapezoid", "speech-bubble", "speech-bubble-rounded", "right-triangle", "star", "hexagon", "pentagon", "octagon", "left-arrow", "right-arrow", "bidirectional-arrow"],
+        "x-octo-board-line-presets": ["curved-arrow", "elbow-arrow", "straight-arrow", "straight-line"],
+        "x-octo-board-native-shape-kinds": ["square", "database", "notched-dovetail", "chevron", "parallelogram", "trapezoid", "speech-bubble", "speech-bubble-rounded", "triangle", "inverted-triangle", "circle", "right-triangle", "star", "hexagon", "pentagon", "octagon", "left-arrow", "right-arrow", "bidirectional-arrow"],
+        "x-octo-board-database-rim-ratio": { "flag": "database-rim-ratio", "minimum": 0.06, "maximum": 0.4, "commands": ["docs.scene.element.create", "docs.scene.element.update"] },
         "summary": "Apply an element upsert/delete batch to a whiteboard scene (needs writer)",
         "description": "Applies a batch of element upserts and soft-deletes to a doc_type 'board' scene under a mandatory optimistic-concurrency guard. Pass the base-version token from `docs scene get` via --base-version (sent as the If-Match header); the server rejects with 412 base_version_stale if the live scene moved since that read. `elements` are full elements to upsert (CAS: the higher `version` wins), `deletedElementIds` are soft-delete tombstones, and `files` upserts file refs; the batch is a structured object, so pass it as JSON through --data. Every element in `elements` must carry a valid fractional-index `index` (z-order key); the CLI rejects an index-less or malformed-index element locally before sending. Only doc_type 'board' is accepted (doc / sheet return 409 unsupported_doc_type). Gates: element count over the max → 413 too_many_elements, a single element too large → 413 element_too_large, whole scene over the cap → 413 doc_too_large, an element failing the whitelist → 422 board_element_invalid, a file ref with no usable attachId → 422 board_file_invalid, missing base version or malformed shape → 400 invalid_body.",
         "x-octo-risk": "write",
@@ -618,6 +624,11 @@
                   "files": {
                     "type": "object",
                     "description": "map of fileId -> file ref (e.g. {\"attachId\":\"…\"}) to upsert for images/files referenced by the scene. Pass via --data."
+                  },
+                  "appState": {
+                    "type": "object",
+                    "description": "partial authoritative view state to merge. Currently only `viewBackgroundColor` (a bounded CSS color, default #ffffff) is honored; other keys are ignored. Prefer the `docs scene background set/reset` commands, which construct this under the If-Match guard. An invalid color is rejected with 400 invalid_body.",
+                    "properties": { "viewBackgroundColor": { "type": "string", "description": "canvas background CSS color (hex / rgb()/rgba()/hsl()/hsla() / keyword); reset writes the default #ffffff" } }
                   }
                 }
               }
@@ -636,6 +647,51 @@
                     "bytes": { "type": "integer", "description": "encoded size of the scene after the edit" },
                     "baseVersion": { "type": "string", "description": "new base-version token for the next edit" },
                     "newDocVersionSeq": { "type": "integer", "description": "sequence of the auto safety snapshot taken before the edit" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bot/docs/{docId}/scene/images": {
+      "post": {
+        "operationId": "docs.scene.element.image",
+        "summary": "Upload and place a local raster image on a whiteboard (needs writer)",
+        "description": "Uploads raw PNG, JPEG, or GIF bytes and atomically places the server-generated image element and file reference. Use the handwritten `docs scene element image` command with --file; image bytes are never accepted through --data or printed in verbose/dry-run output. x/y are required scene coordinates; width/height are optional positive display dimensions and preserve aspect ratio when only one is supplied. The mandatory --base-version is sent as If-Match. Re-read the scene and retry after base_version_stale.",
+        "x-octo-risk": "write",
+        "parameters": [
+          { "name": "docId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "If-Match", "in": "header", "required": true, "x-octo-flag": "base-version", "schema": { "type": "string" }, "description": "base-version token from docs scene get" },
+          { "name": "x", "in": "query", "required": true, "schema": { "type": "number" }, "description": "finite top-left x coordinate" },
+          { "name": "y", "in": "query", "required": true, "schema": { "type": "number" }, "description": "finite top-left y coordinate" },
+          { "name": "width", "in": "query", "required": false, "schema": { "type": "number" }, "description": "optional positive display width" },
+          { "name": "height", "in": "query", "required": false, "schema": { "type": "number" }, "description": "optional positive display height" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/png": { "schema": { "type": "string", "format": "binary" } },
+            "image/jpeg": { "schema": { "type": "string", "format": "binary" } },
+            "image/gif": { "schema": { "type": "string", "format": "binary" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Canonical committed image element and file reference",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "docId": { "type": "string" },
+                    "element": { "type": "object" },
+                    "fileRef": { "type": "object" },
+                    "baseVersion": { "type": "string" },
+                    "newDocVersionSeq": { "type": "integer" },
+                    "bytes": { "type": "integer" },
+                    "schemaVersion": { "type": "integer" }
                   }
                 }
               }
@@ -849,7 +905,7 @@
       "post": {
         "operationId": "docs.comments.add",
         "summary": "Add a root comment (anchored) or a reply (needs reader)",
-        "description": "A reply sets parentId and omits anchors. A root comment needs an anchor: either the opaque base64 Yjs positions anchorStart/anchorEnd (from a live editor selection), or anchorText — the selected text — which the backend resolves against the document. When anchorText matches more than one place the request fails with 422 ambiguous_anchor; narrow it with blockPath (the block's child-index path, e.g. 0,2) and/or occurrence (1-based match index). For a doc_type 'sheet' anchorText is rejected with 409 unsupported_doc_type (a sheet has no text fragment): anchor to a cell instead by passing the base64 of the cell key `${sheetId}!${row}:${col}` (row/col 0-based, e.g. base64 of `default!0:0`) as BOTH anchorStart and anchorEnd, with the A1 label in anchorText (display only).",
+        "description": "A reply sets parentId and omits anchors. A root comment needs an anchor. For boards, `docs comments add-board` offers --point X,Y or repeatable --element-id flags and encodes the canonical versioned anchor pair. Other callers may pass opaque base64 anchorStart/anchorEnd from a live editor selection, or anchorText for rich documents; ambiguous text anchors fail with 422 ambiguous_anchor and can be narrowed with blockPath/occurrence. For sheets, pass the base64 cell key as both anchors.",
         "x-octo-risk": "write",
         "parameters": [
           { "name": "docId", "in": "path", "required": true, "schema": { "type": "string" } }

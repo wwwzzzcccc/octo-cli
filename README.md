@@ -151,10 +151,30 @@ octo-cli docs sheet get sheet-9 --limit 500          # page a large sheet; follo
 octo-cli docs sheet edit sheet-9 --base-version "<token>" \
   --data '{"cells":{"default!0:0":{"v":"hi"},"default!1:0":null}}'
 
-# Whiteboards — read the live scene + base version, then upsert/delete elements under If-Match.
-octo-cli docs scene get board-7                       # elements (z-order) + files + base version token
+# Whiteboards — semantic commands read first, preserve unknown fields, and patch under If-Match.
+octo-cli docs scene element create board-7 --type rectangle --x 80 --y 40 --width 240 --height 120
+octo-cli docs scene element create board-7 --preset database --database-rim-ratio 0.3 # all 21 shape + 4 line flyout presets are supported
+octo-cli docs scene element create board-7 --type text --text "Ship it" --x 120 --y 80 --width 60 --height 25 --baseline 20
+octo-cli docs scene element image board-7 --file ./diagram.png --base-version "<token>" --x 80 --y 240 --width 640
+octo-cli docs scene element transform board-7 e1 --x 160 --y 100 --angle 0.2
+octo-cli docs scene element style board-7 e1 --stroke-color '#1971c2' --background-color '#d0ebff'
+octo-cli docs scene element style board-7 e1 --stroke-style dashed --roundness round   # + arrowheads/typography, type-gated
+octo-cli docs scene element create board-7 --type arrow --points '[[0,0],[80,0],[80,60]]' --arrow-type elbow --fixed-segments '[{"start":[80,0],"end":[80,60],"index":2}]'
+octo-cli docs scene element linear board-7 e1 --points @points.json --arrow-type round # --points also accepts @- stdin
+octo-cli docs scene element bind board-7 arrow1 --endpoint end --element-id box1 --focus 0 --gap 8
+octo-cli docs scene element unbind board-7 arrow1 --endpoint end
+octo-cli docs scene element create board-7 --type freedraw --points @stroke.json --pressures @pressure.json --simulate-pressure=false
+octo-cli docs scene element freedraw board-7 stroke1 --points @- --pressures '[]' --last-committed-point null
+octo-cli docs scene element text board-7 e1 --text "Ship it" --text-align center --runs '[{"start":0,"end":4,"bold":true}]'
+octo-cli docs scene element layer board-7 e1 --position after --relative-to e2
+octo-cli docs scene element group board-7 --id e1 --id e2 --group-id g1   # atomic multi-select; ungroup/transform-many/style-many/layer-many too
+octo-cli docs scene element update board-7 e1 --data '{"customData":{"owner":"agent"}}'
+# update accepts only customData, link, and locked (non-empty JSON object).
+octo-cli docs scene element delete board-7 e1
+# Escape hatch for advanced batches: every upsert still needs a valid fractional index.
 octo-cli docs scene edit board-7 --base-version "<token>" \
-  --data '{"elements":[{"id":"e1","type":"rectangle","version":4}],"deletedElementIds":["e2"],"files":{}}'
+  --data '{"elements":[{"id":"e1","type":"rectangle","version":4,"index":"a0"}],"deletedElementIds":["e2"],"files":{}}'
+octo-cli docs scene import-mermaid board-7 --file ./diagram.mmd       # transport contract; requires a backend converter
 octo-cli docs import board-7 --file ./board.excalidraw              # merge (default): preserves existing elements
 octo-cli docs import board-7 --file ./board.excalidraw --mode replace # explicit overwrite; backend safety snapshot + concurrency protection
 octo-cli docs export board-7 --export-format png -o ./board.png
@@ -326,3 +346,13 @@ by editing a spec in `internal/registry/specs/`, not Go code.
 ## License
 
 [Apache-2.0](./LICENSE)
+
+Board semantic additions include strict Web-toolbar `create --preset` values,
+covering all 21 shape and 4 line flyout slots (plus the documented rectangle and
+inverted-triangle compatibility aliases), all 19 native shape kinds, and a strict
+`--database-rim-ratio 0.06..0.4` create/update option;
+atomic `frame-create`/`frame-add`/`frame-remove`/`unframe`, atomic
+`bind-text`/`unbind-text`, and relative/proportional transforms (`--dx`, `--dy`,
+`--rotate-deg`, `--scale`). See `skills/octo-docs/board.md` for examples and the
+explicit backend/shared-contract blockers for image editing and justify/strike, plus
+the Mermaid import contract.

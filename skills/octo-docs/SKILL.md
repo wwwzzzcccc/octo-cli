@@ -76,6 +76,8 @@ octo-cli docs import <docId> --file ./input.md
 # --export-format is distinct from global --format (the envelope renderer).
 octo-cli docs export <docId> --export-format pdf -o ./output.pdf
 # Other accepted matching pairs: md/.md, docx/.docx, xlsx/.xlsx, png/.png, svg/.svg
+# Portable live-board save (including embedded referenced images):
+octo-cli docs save-excalidraw <boardId> -o ./board.excalidraw
 
 octo-cli docs rename <docId> --title "New title"
 octo-cli docs delete <docId>                 # soft delete (admin)

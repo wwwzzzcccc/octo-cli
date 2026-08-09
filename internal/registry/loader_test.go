@@ -43,7 +43,7 @@ func TestAllDomainOperationCounts(t *testing.T) {
 		"file":        4,
 		"bot":         6,
 		"event":       2,
-		"docs":        32,
+		"docs":        33,
 		"html":        20,
 		"marketplace": 25,
 		"summary":     4,
@@ -59,6 +59,36 @@ func TestAllDomainOperationCounts(t *testing.T) {
 	all := r.ListAllOperations()
 	if len(all) != totalWant {
 		t.Errorf("ListAllOperations: got %d, want %d", len(all), totalWant)
+	}
+}
+
+func TestSchemaAliasesDoNotChangeRuntimeOperations(t *testing.T) {
+	r := MustNew()
+	aliases := []string{
+		"docs.scene.element.create",
+		"docs.scene.element.frame-create",
+		"docs.scene.element.bind-text",
+	}
+
+	if got := len(r.ListOperations("docs")); got != 33 {
+		t.Fatalf("runtime docs operation count = %d, want 33", got)
+	}
+	if got := len(r.ListAllOperations()); got != 135 {
+		t.Fatalf("runtime total operation count = %d, want 135", got)
+	}
+	for _, alias := range aliases {
+		if _, ok := r.GetOperation(alias); ok {
+			t.Errorf("runtime GetOperation unexpectedly resolved schema alias %q", alias)
+		}
+		if containsOperationID(r.EnabledOperations(), alias) {
+			t.Errorf("runtime EnabledOperations unexpectedly contains schema alias %q", alias)
+		}
+		if !containsOperationID(r.ListAllSchemaOperations(), alias) {
+			t.Errorf("ListAllSchemaOperations missing schema alias %q", alias)
+		}
+		if !containsOperationID(r.EnabledSchemaOperations(), alias) {
+			t.Errorf("EnabledSchemaOperations missing enabled schema alias %q", alias)
+		}
 	}
 }
 
@@ -432,6 +462,15 @@ func operationIDs(ops []OperationInfo) []string {
 	return out
 }
 
+func containsOperationID(ops []OperationInfo, want string) bool {
+	for _, op := range ops {
+		if op.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
 // matter carries x-octo-disabled in its embedded spec — it must stay loaded
 // (engine + schema introspection depend on it) yet drop out of the
 // caller-facing enabled views.
@@ -469,6 +508,11 @@ func TestEnabledOperationsExcludesDisabledButResolvable(t *testing.T) {
 	for _, op := range r.EnabledOperations() {
 		if op.Service == "matter" {
 			t.Errorf("EnabledOperations leaked a matter op: %s", op.ID)
+		}
+	}
+	for _, op := range r.EnabledSchemaOperations() {
+		if op.Service == "matter" {
+			t.Errorf("EnabledSchemaOperations leaked a matter op: %s", op.ID)
 		}
 	}
 	// Explicit lookup of a disabled service's op still resolves.

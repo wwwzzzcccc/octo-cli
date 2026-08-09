@@ -110,9 +110,24 @@ func (r *Registry) EnabledServices() []string {
 }
 
 // EnabledOperations is ListAllOperations minus operations belonging to a
-// disabled service.
+// disabled service. It deliberately remains wire-only: runtime command
+// registration must never see schema-only handwritten aliases.
 func (r *Registry) EnabledOperations() []OperationInfo {
 	all := r.ListAllOperations()
+	out := make([]OperationInfo, 0, len(all))
+	for _, op := range all {
+		if !r.ServiceDisabled(op.Service) {
+			out = append(out, op)
+		}
+	}
+	return out
+}
+
+// EnabledSchemaOperations is ListAllSchemaOperations minus operations
+// belonging to a disabled service. This is the global schema-discovery view;
+// unlike EnabledOperations it includes handwritten command aliases.
+func (r *Registry) EnabledSchemaOperations() []OperationInfo {
+	all := r.ListAllSchemaOperations()
 	out := make([]OperationInfo, 0, len(all))
 	for _, op := range all {
 		if !r.ServiceDisabled(op.Service) {
@@ -127,12 +142,13 @@ func (r *Registry) EnabledOperations() []OperationInfo {
 // needed to route to and describe the operation without loading its full
 // parameter / schema detail. Use GetOperation for the expanded view.
 type OperationInfo struct {
-	ID      string `json:"id"`
-	Service string `json:"service"`
-	Method  string `json:"method"`
-	Path    string `json:"path"`
-	Summary string `json:"summary,omitempty"`
-	Risk    string `json:"risk,omitempty"`
+	ID         string         `json:"id"`
+	Service    string         `json:"service"`
+	Method     string         `json:"method"`
+	Path       string         `json:"path"`
+	Summary    string         `json:"summary,omitempty"`
+	Risk       string         `json:"risk,omitempty"`
+	Extensions map[string]any `json:"extensions,omitempty"`
 }
 
 // ParamInfo describes a single parameter on an operation (one entry in the
@@ -259,13 +275,45 @@ func (r *Registry) ListOperations(service string) []OperationInfo {
 			return
 		}
 		out = append(out, OperationInfo{
-			ID:      id,
-			Service: service,
-			Method:  strings.ToUpper(method),
-			Path:    pathStr,
-			Summary: stringOf(op["summary"]),
-			Risk:    stringOf(op["x-octo-risk"]),
+			ID:         id,
+			Service:    service,
+			Method:     strings.ToUpper(method),
+			Path:       pathStr,
+			Summary:    stringOf(op["summary"]),
+			Risk:       stringOf(op["x-octo-risk"]),
+			Extensions: operationExtensions(op),
 		})
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// ListSchemaOperations augments the wire operations with schema-only
+// handwritten command aliases declared by x-octo-handwritten-commands. Runtime
+// command registration continues to use ListOperations, so aliases cannot be
+// mistaken for additional HTTP endpoints or collide with handwritten Cobra
+// commands.
+func (r *Registry) ListSchemaOperations(service string) []OperationInfo {
+	out := append([]OperationInfo(nil), r.ListOperations(service)...)
+	doc := r.specs[service]
+	if doc == nil {
+		return nil
+	}
+	walkOperations(doc, func(pathStr, method string, op map[string]any) {
+		if truthy(op["x-octo-cli-hidden"]) {
+			return
+		}
+		for _, alias := range handwrittenCommands(op) {
+			out = append(out, OperationInfo{
+				ID:         alias,
+				Service:    service,
+				Method:     strings.ToUpper(method),
+				Path:       pathStr,
+				Summary:    stringOf(op["summary"]),
+				Risk:       stringOf(op["x-octo-risk"]),
+				Extensions: operationExtensions(op),
+			})
+		}
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
@@ -277,6 +325,17 @@ func (r *Registry) ListAllOperations() []OperationInfo {
 	var all []OperationInfo
 	for _, s := range r.ListServices() {
 		all = append(all, r.ListOperations(s)...)
+	}
+	return all
+}
+
+// ListAllSchemaOperations returns wire operations and schema-only handwritten
+// command aliases across all services, sorted by service then operationId.
+// Runtime callers must continue to use ListAllOperations or EnabledOperations.
+func (r *Registry) ListAllSchemaOperations() []OperationInfo {
+	var all []OperationInfo
+	for _, s := range r.ListServices() {
+		all = append(all, r.ListSchemaOperations(s)...)
 	}
 	return all
 }
@@ -298,6 +357,29 @@ func (r *Registry) GetOperation(operationID string) (*OperationDetail, bool) {
 				return
 			}
 			found = buildDetail(service, doc, pathStr, method, op)
+		})
+		if found != nil {
+			return found, true
+		}
+	}
+	return nil, false
+}
+
+// GetSchemaOperation resolves either a wire operationId or a schema-only
+// handwritten command alias. GetOperation deliberately remains wire-only for
+// metadata-driven runtime command registration.
+func (r *Registry) GetSchemaOperation(operationID string) (*OperationDetail, bool) {
+	if detail, ok := r.GetOperation(operationID); ok {
+		return detail, true
+	}
+	for service, doc := range r.specs {
+		var found *OperationDetail
+		walkOperations(doc, func(pathStr, method string, op map[string]any) {
+			if found != nil || truthy(op["x-octo-cli-hidden"]) || !containsString(handwrittenCommands(op), operationID) {
+				return
+			}
+			found = buildDetail(service, doc, pathStr, method, op)
+			found.ID = operationID
 		})
 		if found != nil {
 			return found, true
@@ -339,12 +421,13 @@ func walkOperations(doc map[string]any, fn func(path, method string, op map[stri
 func buildDetail(service string, doc map[string]any, pathStr, method string, op map[string]any) *OperationDetail {
 	d := &OperationDetail{
 		OperationInfo: OperationInfo{
-			ID:      stringOf(op["operationId"]),
-			Service: service,
-			Method:  strings.ToUpper(method),
-			Path:    pathStr,
-			Summary: stringOf(op["summary"]),
-			Risk:    stringOf(op["x-octo-risk"]),
+			ID:         stringOf(op["operationId"]),
+			Service:    service,
+			Method:     strings.ToUpper(method),
+			Path:       pathStr,
+			Summary:    stringOf(op["summary"]),
+			Risk:       stringOf(op["x-octo-risk"]),
+			Extensions: operationExtensions(op),
 		},
 		BaseURLEnv:  stringOf(doc["x-octo-base-url"]),
 		SpaceHeader: boolOf(doc["x-octo-space-header"]),
@@ -416,6 +499,46 @@ func buildDetail(service string, doc map[string]any, pathStr, method string, op 
 	}
 
 	return d
+}
+
+// operationExtensions exposes additive operation-level x-octo-* metadata to
+// schema consumers without teaching the registry about each extension. This
+// keeps old specs compatible and makes future metadata discoverable as soon as
+// it is added to a spec.
+func operationExtensions(op map[string]any) map[string]any {
+	ext := map[string]any{}
+	for key, value := range op {
+		if strings.HasPrefix(key, "x-octo-") {
+			ext[key] = value
+		}
+	}
+	if len(ext) == 0 {
+		return nil
+	}
+	return ext
+}
+
+func handwrittenCommands(op map[string]any) []string {
+	raw, ok := op["x-octo-handwritten-commands"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		if id, ok := value.(string); ok && id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func extractJSONSchema(body map[string]any) map[string]any {

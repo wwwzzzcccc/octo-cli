@@ -81,6 +81,25 @@ func TestCmd_SchemaList(t *testing.T) {
 	if len(services) == 0 {
 		t.Errorf("expected at least one service, got %v", services)
 	}
+	operations, _ := data["operations"].([]any)
+	want := map[string]bool{
+		"docs.scene.element.create":       false,
+		"docs.scene.element.frame-create": false,
+		"docs.scene.element.bind-text":    false,
+	}
+	for _, raw := range operations {
+		op, _ := raw.(map[string]any)
+		if id, _ := op["id"].(string); id != "" {
+			if _, ok := want[id]; ok {
+				want[id] = true
+			}
+		}
+	}
+	for id, found := range want {
+		if !found {
+			t.Errorf("global schema listing missing handwritten alias %q", id)
+		}
+	}
 }
 
 func TestCmd_SchemaListByDomain(t *testing.T) {
@@ -96,6 +115,60 @@ func TestCmd_SchemaListByDomain(t *testing.T) {
 	data, _ := env["data"].(map[string]any)
 	if data["service"] != "matter" {
 		t.Errorf("service = %v", data["service"])
+	}
+}
+
+func TestCmd_SchemaDocsDiscoversHandwrittenCommandsAndExtensions(t *testing.T) {
+	f := newTestFactoryWithReg()
+	f.SetConfig(&config.Config{Format: "json"})
+
+	out, _, err := execRoot(t, f, "schema", "--list", "docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env map[string]any
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatal(err)
+	}
+	operations := env["data"].(map[string]any)["operations"].([]any)
+	want := map[string]bool{
+		"docs.scene.element.create":         false,
+		"docs.scene.element.update":         false,
+		"docs.scene.element.transform":      false,
+		"docs.scene.element.transform-many": false,
+		"docs.scene.element.frame-create":   false,
+		"docs.scene.element.bind-text":      false,
+	}
+	for _, raw := range operations {
+		op := raw.(map[string]any)
+		if _, ok := want[op["id"].(string)]; ok {
+			want[op["id"].(string)] = true
+		}
+	}
+	for id, found := range want {
+		if !found {
+			t.Errorf("handwritten operation %q is not discoverable", id)
+		}
+	}
+
+	f = newTestFactoryWithReg()
+	f.SetConfig(&config.Config{Format: "json"})
+	out, _, err = execRoot(t, f, "schema", "docs.scene.element.create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatal(err)
+	}
+	detail := env["data"].(map[string]any)
+	if detail["id"] != "docs.scene.element.create" {
+		t.Fatalf("id=%v", detail["id"])
+	}
+	extensions := detail["extensions"].(map[string]any)
+	for _, key := range []string{"x-octo-handwritten-commands", "x-octo-board-shape-presets", "x-octo-board-line-presets", "x-octo-board-native-shape-kinds", "x-octo-board-database-rim-ratio"} {
+		if extensions[key] == nil {
+			t.Errorf("operation detail missing %s: %v", key, extensions)
+		}
 	}
 }
 

@@ -57,6 +57,10 @@ type Request struct {
 	Headers     map[string]string
 	RawBody     []byte
 	ContentType string
+	// SensitiveBody suppresses request-body rendering in verbose and dry-run
+	// output. Use it for binary uploads and other payloads that must never be
+	// copied into logs; the body is still sent unchanged on the wire.
+	SensitiveBody bool
 	// BinaryResponse asks the client to treat 3xx/non-JSON responses as
 	// structured metadata envelopes rather than parsing JSON. See file.download.
 	BinaryResponse bool
@@ -158,14 +162,17 @@ func (c *Client) Do(ctx context.Context, req *Request) ([]byte, error) {
 	}
 
 	if c.options.DryRun {
+		if req.SensitiveBody {
+			bodyBytes = nil
+		}
 		return c.renderDryRun(req.Method, u, req.Headers, bodyBytes, req.SuppressSpaceHeader)
 	}
 
-	return c.doWithRetry(ctx, req.Method, u, req.Headers, bodyBytes, contentType, req.BinaryResponse, req.OutputPath, req.SuppressSpaceHeader)
+	return c.doWithRetry(ctx, req.Method, u, req.Headers, bodyBytes, contentType, req.BinaryResponse, req.OutputPath, req.SuppressSpaceHeader, req.SensitiveBody)
 }
 
 // doWithRetry runs the HTTP request, retrying transient errors with backoff.
-func (c *Client) doWithRetry(ctx context.Context, method, urlStr string, headers map[string]string, body []byte, contentType string, binaryResp bool, outputPath string, suppressSpaceHeader bool) ([]byte, error) {
+func (c *Client) doWithRetry(ctx context.Context, method, urlStr string, headers map[string]string, body []byte, contentType string, binaryResp bool, outputPath string, suppressSpaceHeader bool, sensitiveBody bool) ([]byte, error) {
 	maxRetries := defaultMaxRetries
 	if c.options.NoRetry {
 		maxRetries = 0
@@ -189,7 +196,7 @@ func (c *Client) doWithRetry(ctx context.Context, method, urlStr string, headers
 			}
 		}
 
-		body, err := c.attempt(ctx, method, urlStr, headers, body, contentType, binaryResp, outputPath, suppressSpaceHeader)
+		body, err := c.attempt(ctx, method, urlStr, headers, body, contentType, binaryResp, outputPath, suppressSpaceHeader, sensitiveBody)
 		if err == nil {
 			return body, nil
 		}
@@ -203,7 +210,7 @@ func (c *Client) doWithRetry(ctx context.Context, method, urlStr string, headers
 }
 
 // attempt executes one HTTP round-trip and interprets the response.
-func (c *Client) attempt(ctx context.Context, method, urlStr string, headers map[string]string, body []byte, contentType string, binaryResp bool, outputPath string, suppressSpaceHeader bool) ([]byte, error) { //nolint:gocyclo // HTTP attempt handles auth, headers, dry-run, binary, retries in one flow
+func (c *Client) attempt(ctx context.Context, method, urlStr string, headers map[string]string, body []byte, contentType string, binaryResp bool, outputPath string, suppressSpaceHeader bool, sensitiveBody bool) ([]byte, error) { //nolint:gocyclo // HTTP attempt handles auth, headers, dry-run, binary, retries in one flow
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -228,7 +235,7 @@ func (c *Client) attempt(ctx context.Context, method, urlStr string, headers map
 	}
 
 	c.verbosef("%s %s", method, urlStr)
-	if c.options.Verbose && len(body) > 0 {
+	if c.options.Verbose && len(body) > 0 && !sensitiveBody {
 		c.verbosef("request body: %s", truncate(string(body), 1024))
 	}
 
@@ -321,6 +328,13 @@ func (c *Client) attempt(ctx context.Context, method, urlStr string, headers map
 		return nil, re
 	}
 	return nil, ee
+}
+
+// WriteFileAtomic writes data to path atomically for callers outside this
+// package that build a payload locally (e.g. the .excalidraw exporter) and want
+// the same all-or-nothing guarantee the binary-download path uses.
+func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	return writeFileAtomic(path, data, perm)
 }
 
 // writeFileAtomic writes data to path atomically: it streams the bytes into a

@@ -65,7 +65,7 @@ func runSchemaList(f *cmdutil.Factory, args []string) error {
 	}
 	if len(args) == 1 {
 		svc := args[0]
-		ops := reg.ListOperations(svc)
+		ops := reg.ListSchemaOperations(svc)
 		if ops == nil && reg.GetSpec(svc) == nil {
 			ee := output.ErrValidation(
 				fmt.Sprintf("unknown service %q", svc),
@@ -81,9 +81,10 @@ func runSchemaList(f *cmdutil.Factory, args []string) error {
 		payload["operations"] = ops
 	} else {
 		// Global discovery hides disabled domains so agents aren't pointed at
-		// a withheld surface. The registry owns the enabled view.
+		// a withheld surface. Unlike runtime registration, schema discovery also
+		// includes the enabled services' schema-only handwritten aliases.
 		payload["services"] = reg.EnabledServices()
-		payload["operations"] = reg.EnabledOperations()
+		payload["operations"] = reg.EnabledSchemaOperations()
 	}
 	buf, err := json.Marshal(payload)
 	if err != nil {
@@ -94,7 +95,7 @@ func runSchemaList(f *cmdutil.Factory, args []string) error {
 
 func runSchemaGet(f *cmdutil.Factory, operationID string) error {
 	reg := f.Registry()
-	op, ok := reg.GetOperation(operationID)
+	op, ok := reg.GetSchemaOperation(operationID)
 	if !ok {
 		ee := output.ErrValidation(
 			fmt.Sprintf("unknown operation %q", operationID),
