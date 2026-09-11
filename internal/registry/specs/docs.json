@@ -577,6 +577,109 @@
         }
       }
     },
+    "/v1/bot/docs/{docId}/sheet/replace": {
+      "post": {
+        "operationId": "docs.sheet.replace",
+        "summary": "Find and replace spreadsheet values or formulas atomically (needs writer)",
+        "description": "Finds and replaces every match on the server in one optimistic-concurrency-guarded edit. Pass the baseVersion from `docs sheet get` through --base-version. Scope defaults to the whole workbook; pass logicalId for one worksheet, or logicalId plus an inclusive 0-based range for a selection. range without logicalId is rejected. findBy is `value` by default or `formula`; formula cells can match their cached display value in value mode but are changed only in formula mode. caseSensitive and matchesTheWholeCell default to false. The server trims findString like the spreadsheet UI, treats replacement text literally (including `$` sequences), preserves cell metadata, and reports matchedCells, replacedCells, and total replacements. An empty replaceString is allowed. A stale token returns 412 base_version_stale; protected cells return 403 protected_range; generated batches over the write limits return 413 too_many_cells or cell_too_large.",
+        "x-octo-risk": "write",
+        "parameters": [
+          {
+            "name": "docId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "x-octo-flag": "base-version",
+            "schema": { "type": "string" },
+            "description": "base-version token from 'docs sheet get' (sent as the If-Match header; required)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["findString", "replaceString"],
+                "properties": {
+                  "findString": {
+                    "type": "string",
+                    "x-octo-flag": "find-string",
+                    "description": "literal text to find; leading/trailing whitespace is trimmed and the result must be non-empty"
+                  },
+                  "replaceString": {
+                    "type": "string",
+                    "x-octo-flag": "replace-string",
+                    "description": "literal replacement text; may be empty"
+                  },
+                  "findBy": {
+                    "type": "string",
+                    "x-octo-flag": "find-by",
+                    "enum": ["value", "formula"],
+                    "default": "value",
+                    "description": "search displayed/raw values or formula source text"
+                  },
+                  "caseSensitive": {
+                    "type": "boolean",
+                    "x-octo-flag": "case-sensitive",
+                    "default": false,
+                    "description": "match letter case exactly; defaults to false"
+                  },
+                  "matchesTheWholeCell": {
+                    "type": "boolean",
+                    "x-octo-flag": "matches-the-whole-cell",
+                    "default": false,
+                    "description": "require the complete stored value to match; rich-text streams include paragraph terminators and therefore do not match"
+                  },
+                  "logicalId": {
+                    "type": "string",
+                    "x-octo-flag": "logical-id",
+                    "description": "optional worksheet logical id; omit for the whole workbook"
+                  },
+                  "range": {
+                    "type": "object",
+                    "description": "optional inclusive 0-based selection; requires logicalId",
+                    "required": ["startRow", "startColumn", "endRow", "endColumn"],
+                    "properties": {
+                      "startRow": { "type": "integer", "minimum": 0 },
+                      "startColumn": { "type": "integer", "minimum": 0 },
+                      "endRow": { "type": "integer", "minimum": 0 },
+                      "endColumn": { "type": "integer", "minimum": 0 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replacement result and current/new base version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "docId": { "type": "string" },
+                    "matchedCells": { "type": "integer" },
+                    "replacedCells": { "type": "integer" },
+                    "replacements": { "type": "integer" },
+                    "bytes": { "type": "integer", "description": "present when the sheet changed" },
+                    "baseVersion": { "type": "string" },
+                    "newDocVersionSeq": { "type": "integer", "description": "present when the sheet changed" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/bot/docs/{docId}/scene": {
       "get": {
         "operationId": "docs.scene.get",

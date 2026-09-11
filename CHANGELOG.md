@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`octo-cli docs sheet replace`** — performs one server-side, optimistic-
+  concurrency-guarded find-and-replace over workbook values or formulas, with
+  optional worksheet/range, case, and whole-cell controls. **Minimum rollout
+  dependency:** release only after `octo-docs-backend` MR !132 is merged and
+  deployed; on a mixed-version environment where this route returns 404, fall
+  back to `docs sheet get` plus an explicit `docs sheet edit` batch.
 - **`octo-cli marketplace plugin` family (unified plugin surface)** — one command
   family over the backend's unified `/plugins/*` API, replacing the retired
   per-type `skill` / `mcp` / `marketplace expert` / `marketplace squad` surfaces

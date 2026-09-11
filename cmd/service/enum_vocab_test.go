@@ -161,6 +161,9 @@ var requestSideVocabularies = []vocabulary{
 	{op: "docs.versions.list", in: "query", field: "kind",
 		want: []string{"all", "auto", "manual"},
 		why:  "octo-docs-backend version kind filter"},
+	{op: "docs.sheet.replace", in: "body", field: "findBy",
+		want: []string{"value", "formula"},
+		why:  "paired octo-docs-backend src/api/routes/docSheet.ts parseSheetReplaceBody accepts exactly value|formula"},
 
 	// --- html ---
 	{op: "html.grant.add", in: "body", field: "role",

@@ -3,7 +3,7 @@
 Read this when the target is a **spreadsheet** (`doc_type: sheet`) and you need to
 read or edit its cells, column widths / row heights, floating images, hyperlinks,
 merged ranges, sheet tabs, freeze panes, shared filters, sorting, checkbox and
-dropdown validation rules, or export it.
+dropdown validation rules, run find & replace, or export it.
 All commands call `$OCTO_API_BASE_URL/v1/bot/docs/*`. Auth & space rules are in
 `SKILL.md`.
 
@@ -41,6 +41,48 @@ octo-cli docs sheet get <docId>
 octo-cli docs sheet edit <docId> --base-version "<token>" \
   --data '{"cells":{"default!0:0":{"v":"hi"},"default!1:0":null}}'
 ```
+
+### Find and replace
+
+Prefer the server-side replace command when the endpoint is available. It
+computes one complete replacement batch against the `baseVersion` you read and
+commits it atomically; a concurrent edit returns `412 base_version_stale`. If
+this command returns 404 in a mixed-version environment, fall back to `docs
+sheet get` plus an explicit `docs sheet edit` batch.
+
+```bash
+# Whole workbook, values, case-insensitive substring match (the defaults).
+octo-cli docs sheet replace <docId> --base-version "<token>" \
+  --data '{"findString":"old","replaceString":"new"}'
+
+# One worksheet and one inclusive, 0-based selection (C2:E10).
+octo-cli docs sheet replace <docId> --base-version "<token>" --data '{
+  "findString":"=SUM(","replaceString":"=AVERAGE(","findBy":"formula",
+  "caseSensitive":true,"matchesTheWholeCell":false,
+  "logicalId":"default",
+  "range":{"startRow":1,"startColumn":2,"endRow":9,"endColumn":4}
+}'
+
+# Delete matching text by using an empty replacement string.
+octo-cli docs sheet replace <docId> --base-version "<token>" \
+  --data '{"findString":"obsolete","replaceString":""}'
+```
+
+Scope rules: omit both `logicalId` and `range` for the whole workbook; send only
+`logicalId` for one worksheet; send both for a rectangular selection. A `range`
+without `logicalId` is invalid. `findBy` is `value` or `formula`. In value mode a
+formula cell may count in `matchedCells` through its cached display value, but it
+is only writable in formula mode, so `replacedCells` can be smaller. The server
+trims `findString`, which must remain non-empty. Formula mode uses substring matching over formula source text.
+A short string such as `SUM` also matches
+`SUMIF` and `SUMPRODUCT`, so use an unambiguous string or a narrow selection and
+read the formulas back afterwards. Value mode searches stored raw values, not
+formatted display text; booleans are `1` and `0`. Whole-cell matching does not
+match rich-text cells because their stored streams include paragraph terminators.
+Replacement text is literal, including `$` sequences. The response also includes
+the total occurrence count in `replacements` and a fresh `baseVersion`; when
+nothing is replaceable, no version or Yjs update is created and the original base
+version is returned.
 
 ### Freeze panes
 
@@ -569,4 +611,5 @@ A sheet cell comment anchors to the cell key, not a text range — see
 ```bash
 octo-cli schema docs.sheet.get
 octo-cli schema docs.sheet.edit
+octo-cli schema docs.sheet.replace
 ```

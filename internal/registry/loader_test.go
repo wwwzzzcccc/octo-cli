@@ -45,7 +45,7 @@ func TestAllDomainOperationCounts(t *testing.T) {
 		"file":        4,
 		"bot":         6,
 		"event":       2,
-		"docs":        32,
+		"docs":        33,
 		"drive":       43,
 		"html":        21,
 		"marketplace": 25,

@@ -39,7 +39,7 @@ func TestDocs_TreeShape(t *testing.T) {
 
 	groups := map[string][]string{
 		"content":     {"get", "edit"},
-		"sheet":       {"get", "edit"},
+		"sheet":       {"get", "edit", "replace"},
 		"scene":       {"get", "edit", "export"},
 		"members":     {"list", "set", "remove"},
 		"share":       {"get", "set"},
@@ -80,6 +80,7 @@ func TestDocs_RegistryShape(t *testing.T) {
 		"docs.content.edit":        {"PATCH", "/v1/bot/docs/{docId}/content"},
 		"docs.sheet.get":           {"GET", "/v1/bot/docs/{docId}/sheet"},
 		"docs.sheet.edit":          {"PATCH", "/v1/bot/docs/{docId}/sheet"},
+		"docs.sheet.replace":       {"POST", "/v1/bot/docs/{docId}/sheet/replace"},
 		"docs.scene.get":           {"GET", "/v1/bot/docs/{docId}/scene"},
 		"docs.scene.edit":          {"PATCH", "/v1/bot/docs/{docId}/scene"},
 		"docs.members.list":        {"GET", "/v1/bot/docs/{docId}/members"},
@@ -1142,6 +1143,150 @@ func TestDocsSheetEdit_SendsCellsBatchAndIfMatch(t *testing.T) {
 	// The base version travels in the header, not the JSON body.
 	if _, present := gotBody["baseVersion"]; present {
 		t.Errorf("baseVersion must not be duplicated into the JSON body; got %v", gotBody["baseVersion"])
+	}
+}
+
+// TestDocsSheetReplace_SendsAtomicRequestAndIfMatch checks that the generated
+// replace command delegates matching and mutation to the backend instead of
+// downloading and rewriting the workbook inside the thin CLI.
+func TestDocsSheetReplace_SendsAtomicRequestAndIfMatch(t *testing.T) {
+	var gotMethod, gotPath, gotIfMatch string
+	var gotBody map[string]any
+	root, _, _ := rootWithService(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		gotIfMatch = r.Header.Get("If-Match")
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"docId":"d1","matchedCells":2,"replacedCells":2,"replacements":3,"baseVersion":"NEXT"}`))
+	})
+	payload := `{"findString":"old","replaceString":"new","findBy":"value","caseSensitive":true,"matchesTheWholeCell":false,"logicalId":"default","range":{"startRow":1,"startColumn":2,"endRow":3,"endColumn":4}}`
+	root.SetArgs([]string{"docs", "sheet", "replace", "d1", "--base-version", "BV_ABC==", "--data", payload})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/v1/bot/docs/d1/sheet/replace" {
+		t.Fatalf("got %s %s, want POST /v1/bot/docs/d1/sheet/replace", gotMethod, gotPath)
+	}
+	if gotIfMatch != "BV_ABC==" {
+		t.Fatalf("If-Match = %q, want BV_ABC==", gotIfMatch)
+	}
+	if gotBody["findString"] != "old" || gotBody["replaceString"] != "new" || gotBody["findBy"] != "value" {
+		t.Fatalf("find/replace body = %#v", gotBody)
+	}
+	if gotBody["caseSensitive"] != true || gotBody["matchesTheWholeCell"] != false || gotBody["logicalId"] != "default" {
+		t.Fatalf("replace options = %#v", gotBody)
+	}
+	rangeBody, ok := gotBody["range"].(map[string]any)
+	if !ok || rangeBody["startRow"] != float64(1) || rangeBody["startColumn"] != float64(2) || rangeBody["endRow"] != float64(3) || rangeBody["endColumn"] != float64(4) {
+		t.Fatalf("range = %#v, want inclusive 0-based C2:E4", gotBody["range"])
+	}
+	if _, present := gotBody["baseVersion"]; present {
+		t.Fatalf("baseVersion must only be sent as If-Match; body = %#v", gotBody)
+	}
+}
+
+func TestDocsSheetReplace_RequiresBaseVersion(t *testing.T) {
+	called := false
+	root, _, _ := rootWithService(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+	root.SetArgs([]string{"docs", "sheet", "replace", "d1", "--data", `{"findString":"old","replaceString":"new"}`})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "required flag") {
+		t.Fatalf("missing --base-version error = %v, want required flag error", err)
+	}
+	if called {
+		t.Fatal("server must not be called when --base-version is missing")
+	}
+}
+
+func TestDocsSheetReplace_UsesKebabCaseFlags(t *testing.T) {
+	var gotBody map[string]any
+	root, _, _ := rootWithService(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"docId":"d1","matchedCells":1,"replacedCells":1,"replacements":1,"baseVersion":"NEXT"}`))
+	})
+	root.SetArgs([]string{
+		"docs", "sheet", "replace", "d1", "--base-version", "BV",
+		"--find-string", "Old", "--replace-string", "New", "--find-by", "value",
+		"--case-sensitive", "--matches-the-whole-cell", "--logical-id", "default",
+	})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	expect := map[string]any{
+		"findString": "Old", "replaceString": "New", "findBy": "value",
+		"caseSensitive": true, "matchesTheWholeCell": true, "logicalId": "default",
+	}
+	if !reflect.DeepEqual(gotBody, expect) {
+		t.Fatalf("body = %#v, want %#v", gotBody, expect)
+	}
+}
+
+func TestDocsSheetReplace_AllowsEmptyReplacement(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "data",
+			args: []string{"--data", `{"findString":"old","replaceString":""}`},
+		},
+		{
+			name: "promoted flag",
+			args: []string{"--find-string", "old", "--replace-string", ""},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody map[string]any
+			root, _, _ := rootWithService(t, func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"docId":"d1","matchedCells":1,"replacedCells":1,"replacements":1,"baseVersion":"NEXT"}`))
+			})
+			args := []string{"docs", "sheet", "replace", "d1", "--base-version", "BV"}
+			root.SetArgs(append(args, tc.args...))
+			if err := root.Execute(); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if value, present := gotBody["replaceString"]; !present || value != "" {
+				t.Fatalf("replaceString = %#v (present %t), want explicit empty string", value, present)
+			}
+		})
+	}
+}
+
+func TestDocsSheetReplace_ValidatesRequiredBodyAndFindBy(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want string
+	}{
+		{name: "replaceString is required", data: `{"findString":"old"}`, want: "replaceString"},
+		{name: "findBy enum", data: `{"findString":"old","replaceString":"new","findBy":"style"}`, want: "ENUM_NOT_ALLOWED"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			root, _, _ := rootWithService(t, func(w http.ResponseWriter, r *http.Request) {
+				called = true
+			})
+			root.SetArgs([]string{"docs", "sheet", "replace", "d1", "--base-version", "BV", "--data", tc.data})
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want text %q", err, tc.want)
+			}
+			if called {
+				t.Fatal("invalid replacement request must not reach the server")
+			}
+		})
 	}
 }
 
