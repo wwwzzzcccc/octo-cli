@@ -634,3 +634,5 @@ A 32 MiB upload may consume substantially more heap during multipart buffering;
 budget roughly 150 MiB per admitted upload. Queued requests can be cancelled
 before opening a file. The 32 MiB file bound and this admission limit constrain
 upload memory growth, but they are not a constant-memory streaming contract.
+
+Explicit `MCP-Protocol-Version` headers must contain exactly one `2025-06-18` value; unsupported, empty, or repeated values return HTTP 400 before dispatch. Headerless calls retain the legacy compatibility behavior, and initialization still advertises only `2025-06-18`. This does not add support for other protocol versions. The channel types for message send, sync, edit, read-receipt, and bot typing are constrained to 1 (DM), 2 (group), or 5 (thread); backend authorization still applies.
