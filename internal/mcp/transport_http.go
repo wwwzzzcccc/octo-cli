@@ -114,6 +114,15 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "origin not allowed", http.StatusForbidden)
 		return
 	}
+	// An explicit version must be the one implemented by this server. Reject
+	// ambiguous/empty headers before reading a body or dispatching any operation.
+	// Headerless requests retain the existing legacy compatibility path;
+	// initialize still negotiates the server's single advertised version.
+	versions, hasVersion := r.Header[http.CanonicalHeaderKey("MCP-Protocol-Version")]
+	if hasVersion && (len(versions) != 1 || versions[0] != defaultProtocolVersion) {
+		http.Error(w, "unsupported MCP protocol version", http.StatusBadRequest)
+		return
+	}
 	if r.Method != http.MethodPost {
 		// No SSE stream is served yet; this transport is POST request/response
 		// only. A GET would be the SSE channel in a fuller implementation.

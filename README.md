@@ -575,3 +575,5 @@ still requires backend authorization. Thread channel
 bindings of type 5 split `group____short` for parent-group and short-id routes.
 HTTP envelopes retain `mcp:connection` credential provenance, and two-tool results
 preserve large JSON integers when wrapping the CLI envelope.
+
+Explicit `MCP-Protocol-Version` headers must contain exactly one `2025-06-18` value; unsupported, empty, or repeated values return HTTP 400 before dispatch. Headerless calls retain the legacy compatibility behavior, and initialization still advertises only `2025-06-18`. This does not add support for other protocol versions. The channel types for message send, sync, edit, read-receipt, and bot typing are constrained to 1 (DM), 2 (group), or 5 (thread); backend authorization still applies.
