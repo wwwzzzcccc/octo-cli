@@ -147,6 +147,8 @@ octo-cli docs sheet edit sheet-9 --base-version "<token>" \
 octo-cli docs scene get board-7                       # elements (z-order) + files + base version token
 octo-cli docs scene edit board-7 --base-version "<token>" \
   --data '{"elements":[{"id":"e1","type":"rectangle","version":4}],"deletedElementIds":["e2"],"files":{}}'
+octo-cli docs import board-7 --file ./board.excalidraw              # merge (default): preserves existing elements
+octo-cli docs import board-7 --file ./board.excalidraw --mode replace # explicit overwrite; backend safety snapshot + concurrency protection
 octo-cli docs export board-7 --export-format png -o ./board.png
 
 # HTML docs (octo-doc) — a SEPARATE backend from `docs`. Publish self-contained

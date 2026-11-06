@@ -38,6 +38,26 @@ are touched (the rest of the board is left as-is). On a key collision the elemen
 with the higher `version` (then smaller `versionNonce`) wins, and a delete is a
 soft-delete tombstone with a superseding version so it converges under CAS.
 
+## Excalidraw file import
+
+Import a standard `.excalidraw` JSON envelope (maximum 25 MiB) directly into an
+existing board. The CLI validates `type: "excalidraw"`, a positive integer
+`version`, an `elements` array, and a `files` object before sending the request.
+
+```bash
+# Safe default: merge imported elements while preserving the existing board.
+octo-cli docs import <docId> --file ./diagram.excalidraw
+
+# Explicit overwrite: replace the board with the imported scene.
+octo-cli docs import <docId> --file ./diagram.excalidraw --mode replace
+```
+
+`--mode` is only valid for `.excalidraw` imports and accepts `merge` (default) or
+`replace`. Merge preserves existing board elements. Replace explicitly overwrites
+the board; the backend first creates a safety snapshot and enforces concurrency
+protection. Use `--dry-run` to inspect the mode, endpoint, and these safety
+semantics without applying the import.
+
 **Concurrency / errors.** The base version is optimistic-concurrency: if the scene
 changed since your `docs scene get`, an edit is rejected with
 `412 base_version_stale` — re-read for a fresh token. Other gates:

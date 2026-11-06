@@ -140,3 +140,128 @@ func TestDocsImport_DryRunDoesNotReadOrUploadFile(t *testing.T) {
 		t.Errorf("content type = %q", env.Data.ContentType)
 	}
 }
+
+func TestDocsImportExcalidraw_DefaultMerge(t *testing.T) {
+	called := false
+	tf, _ := importTestRoot(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/bot/docs/b1/import/excalidraw" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("mode"); got != "merge" {
+			t.Errorf("mode = %q, want merge", got)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type = %q", got)
+		}
+		if got := r.Header.Get("X-Octo-Import-Apply"); got != "true" {
+			t.Errorf("apply header = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"baseVersion":"BV3"}`))
+	})
+	file := writeImportFixture(t, ".excalidraw", []byte(`{"type":"excalidraw","version":2,"elements":[],"files":{}}`))
+	out, _, err := execRoot(t, tf, "docs", "import", "b1", "--file", file)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if !called {
+		t.Fatal("server was not called")
+	}
+	var env struct {
+		Data struct {
+			Format string `json:"format"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data.Format != "excalidraw" {
+		t.Errorf("format = %q", env.Data.Format)
+	}
+}
+
+func TestDocsImportExcalidraw_ReplaceDryRunDescribesSafety(t *testing.T) {
+	called := false
+	tf, _ := importTestRoot(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+	file := writeImportFixture(t, ".excalidraw", []byte(`{"type":"excalidraw","version":2,"elements":[],"files":{}}`))
+	out, _, err := execRoot(t, tf, "--dry-run", "docs", "import", "b1", "--file", file, "--mode", "replace")
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if called {
+		t.Fatal("server must not be called during --dry-run")
+	}
+	var env struct {
+		Data struct {
+			Path      string `json:"path"`
+			Mode      string `json:"mode"`
+			Semantics struct {
+				PreservesExisting bool `json:"preserves_existing"`
+				ExplicitOverwrite bool `json:"explicit_overwrite"`
+				SafetySnapshot    bool `json:"safety_snapshot"`
+				ConcurrencyGuard  bool `json:"concurrency_guarded"`
+			} `json:"semantics"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data.Path != "/v1/bot/docs/b1/import/excalidraw?mode=replace" || env.Data.Mode != "replace" {
+		t.Errorf("dry-run data = %+v", env.Data)
+	}
+	if env.Data.Semantics.PreservesExisting || !env.Data.Semantics.ExplicitOverwrite || !env.Data.Semantics.SafetySnapshot || !env.Data.Semantics.ConcurrencyGuard {
+		t.Errorf("semantics = %+v", env.Data.Semantics)
+	}
+}
+
+func TestDocsImportExcalidraw_ValidatesEnvelopeBeforeRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"type", `{"type":"other","version":2,"elements":[],"files":{}}`},
+		{"version-missing", `{"type":"excalidraw","elements":[],"files":{}}`},
+		{"version-unsupported", `{"type":"excalidraw","version":1,"elements":[],"files":{}}`},
+		{"elements", `{"type":"excalidraw","version":2,"elements":{},"files":{}}`},
+		{"files", `{"type":"excalidraw","version":2,"elements":[],"files":[]}`},
+		{"json", `{`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			tf, _ := importTestRoot(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+			file := writeImportFixture(t, ".excalidraw", []byte(tt.body))
+			if _, _, err := execRoot(t, tf, "docs", "import", "b1", "--file", file); err == nil {
+				t.Fatal("expected validation error")
+			}
+			if called {
+				t.Fatal("server must not be called")
+			}
+		})
+	}
+}
+
+func TestDocsImport_ModeOnlyAppliesToExcalidraw(t *testing.T) {
+	called := false
+	tf, _ := importTestRoot(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+	file := writeImportFixture(t, ".md", []byte("# doc\n"))
+	if _, _, err := execRoot(t, tf, "docs", "import", "d1", "--file", file, "--mode", "replace"); err == nil {
+		t.Fatal("expected validation error")
+	}
+	if called {
+		t.Fatal("server must not be called")
+	}
+}
+
+func TestDocsImportExcalidraw_RejectsUnknownMode(t *testing.T) {
+	called := false
+	tf, _ := importTestRoot(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+	file := writeImportFixture(t, ".excalidraw", []byte(`{"type":"excalidraw","version":2,"elements":[],"files":{}}`))
+	if _, _, err := execRoot(t, tf, "docs", "import", "b1", "--file", file, "--mode", "append"); err == nil {
+		t.Fatal("expected validation error")
+	}
+	if called {
+		t.Fatal("server must not be called")
+	}
+}
